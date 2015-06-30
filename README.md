@@ -2,6 +2,9 @@
 PMP
 
 
+
+
+
 input_mux	:	process (busaddr, iow)
 begin
 	if (iow = '0') then
