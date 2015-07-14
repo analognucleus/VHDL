@@ -1,0 +1,87 @@
+-- pmp test using an address register, input demultiplexer and output multiplexer 
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.STD_logic_ARITH.all;
+use ieee.std_logic_unsigned.all;
+
+entity pmptest is port 
+(
+	clk, rst			:in 		std_logic;
+	data_bus			:inout	std_logic_vector(15 downto 0);	-- to/from PIC
+	ior				:in		std_logic;								-- from PIC
+	iow				:in		std_logic;
+	mall				:in		std_logic;
+	
+	msgdata			:inout	std_logic_vector(7 downto 0);		-- message data between PIC and FPGA
+	msgaddr			:inout	std_logic_vector(7 downto 0)		-- message address between PIC and FPGA
+	
+);
+end pmptest;
+
+architecture arch of pmptest is
+
+	signal pwrite				:std_logic;  
+	signal D1wrt				:std_logic;
+	signal D2wrt				:std_logic;
+	signal D3wrt				:std_logic;
+	signal busaddr				:std_logic_vector(7 downto 0);
+	
+	-- addresses for CPU write commands
+	CONSTANT TEST1PIC2FPGA	:std_logic_vector(7 downto 0):= X"00";
+	CONSTANT TEST2PIC2FPGA	:std_logic_vector(7 downto 0):= X"01";
+
+	-- addresses for CPU read commands
+	CONSTANT TEST1FPGA2PIC 	:std_logic_vector(7 downto 0):= X"00";		-- same values but named to indicate message direction
+	CONSTANT TEST2FPGA2PIC	:std_logic_vector(7 downto 0):= X"01";
+	
+
+BEGIN
+
+PMPbounce: process (mall, iow, clk, ior) 				
+begin
+	if(mall'event and mall = '1') then 					-- after activity on mall save bus address
+		busaddr <= data_bus(7 downto 0);
+		
+		if (clk'event and clk='1' ) then	
+		D1wrt <= iow;						
+		D2wrt <= iow AND D1wrt;
+		D3wrt <= iow AND D2wrt;
+		pwrite <= D2wrt AND NOT D3wrt;					-- time delay until iow is 0 
+																	-- JT: add correct wait states in PIC to match
+		
+			if pwrite = '1' then 								-- receiving data from PIC
+				case(busaddr) is
+					when TEST1FPGA2PIC =>
+						msgaddr <= data_bus(15 downto 8); 	-- JT: create several sets of 8-bit address that can be measured on scope to differet connector ouptus
+						msgdata <= data_bus(7 downto 0);		-- JT: also add an address which outputs all X:00 and another for X:FF
+					when TEST2FPGA2PIC => 	
+						msgaddr <= data_bus(15 downto 8);
+						msgdata <= data_bus(7 downto 0);
+					when others => 
+						data_bus(15 downto 0) <= (others => '0');
+				end case;
+	--			else do nothing and carry on
+			end if;
+		
+				if (clk'event and clk='1' ) then																	
+					if ior = '1' then	
+						case(msgaddr) is									-- sending data to PIC
+							when TEST1PIC2FPGA =>
+								data_bus(15 downto 8) <= msgaddr;
+								data_bus(7 downto 0)	<= msgdata;
+							when TEST2PIC2FPGA => 	
+								data_bus(15 downto 8) <= msgaddr;
+								data_bus(7 downto 0) <= msgdata;
+							when others => 
+								data_bus(15 downto 0) <= (others => '0');
+						end case;
+			--		else do nothing and carry on			
+					end if;
+				end if;
+--			else do nothing and carry on
+--		else do nothing and carry on
+		end if;
+	end if;
+end process PMPbounce;
+END arch; 
