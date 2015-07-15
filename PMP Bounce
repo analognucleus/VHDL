@@ -14,7 +14,7 @@ entity pmptest is port
 	mall				:in		std_logic;
 	
 	msgdata1			:inout	std_logic_vector(7 downto 0);		-- message data between PIC and FPGA
-	msgaddr1			:inout	std_logic_vector(7 downto 0)		-- message address between PIC and FPGA
+	msgaddr1			:inout	std_logic_vector(7 downto 0);		-- message address between PIC and FPGA
 	msgdata2			:inout	std_logic_vector(7 downto 0);		-- message data between PIC and FPGA
 	msgaddr2			:inout	std_logic_vector(7 downto 0)		-- message address between PIC and FPGA
 );
@@ -64,16 +64,22 @@ begin
 					msgaddr2 <= data_bus(7 downto 0);
 					msgdata2 <= data_bus(15 downto 8);
 				when others => 
-					msgaddr <= msgaddr; 
-					msgdata <= msgdata;
+					msgaddr1 <= msgaddr1; 
+					msgdata1 <= msgdata1;
+					msgaddr2 <= msgaddr2; 
+					msgdata2 <= msgdata2;
 			end case;
 		else 
-			msgaddr <= msgaddr; 
-			msgdata <= msgdata;				
+			msgaddr1 <= msgaddr1; 
+			msgdata1 <= msgdata1;
+			msgaddr2 <= msgaddr2; 
+			msgdata2 <= msgdata2;			
 		end if; -- pwrite
 	else 
-		msgaddr <= msgaddr; 
-		msgdata <= msgdata;				
+		msgaddr1 <= msgaddr1; 
+		msgdata1 <= msgdata1;
+		msgaddr2 <= msgaddr2; 
+		msgdata2 <= msgdata2;			
 	end if; -- clk'event
 end process pic2fpga;
 		
