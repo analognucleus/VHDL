@@ -41,8 +41,7 @@ BEGIN
 pic2fpga: process (mall, iow, clk) 				
 begin
 	if rst = '0' then busaddr <= X"FF";
-	else (mall'event and mall = '1') then 					-- after activity on mall save bus address
-		busaddr <= data_bus(7 downto 0);
+	else (mall'event and mall = '1') then busaddr <= data_bus(7 downto 0);		-- after activity on mall save bus address
 	end if;	
 		
 		if (clk'event and clk='1' ) then	
@@ -68,6 +67,10 @@ begin
 				msgaddr <= msgaddr; 
 				msgdata <= msgdata;				
 			end if;
+		else 
+			msgaddr <= msgaddr; 
+			msgdata <= msgdata;				
+		end if;
 end process pic2fpga;
 		
 data_bus(7 downto 0) <= msgdata when data_bus(15 downto 8) = TEST1FPGA2PIC AND ior = '1' else
