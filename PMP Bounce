@@ -78,3 +78,4 @@ data_bus(7 downto 0) <= msgdata when data_bus(15 downto 8) = TEST1FPGA2PIC AND i
 								"ZZZZZZZZ"; 
 
 								 
+end arch;
