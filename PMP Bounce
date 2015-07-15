@@ -13,8 +13,10 @@ entity pmptest is port
 	iow				:in		std_logic;
 	mall				:in		std_logic;
 	
-	msgdata			:inout	std_logic_vector(7 downto 0);		-- message data between PIC and FPGA
-	msgaddr			:inout	std_logic_vector(7 downto 0)		-- message address between PIC and FPGA
+	msgdata1			:inout	std_logic_vector(7 downto 0);		-- message data between PIC and FPGA
+	msgaddr1			:inout	std_logic_vector(7 downto 0)		-- message address between PIC and FPGA
+	msgdata2			:inout	std_logic_vector(7 downto 0);		-- message data between PIC and FPGA
+	msgaddr2			:inout	std_logic_vector(7 downto 0)		-- message address between PIC and FPGA
 );
 end pmptest;
 
@@ -56,11 +58,11 @@ begin
 		if pwrite = '1' then 								-- receiving data from PIC
 			case busaddr is
 				when TEST1PIC2FPGA =>
-					msgaddr <= data_bus(15 downto 8); 	-- JT: create several sets of 8-bit address that can be measured on scope to differet connector ouptus
-					msgdata <= data_bus(7 downto 0);		-- JT: also add an address which outputs all X:00 and another for X:FF
+					msgaddr1 <= data_bus(7 downto 0); 	-- JT: create several sets of 8-bit address that can be measured on scope to differet connector ouptus
+					msgdata1 <= data_bus(15 downto 8);		-- JT: also add an address which outputs all X:00 and another for X:FF
 				when TEST2PIC2FPGA => 	
-					msgaddr <= data_bus(15 downto 8);
-					msgdata <= data_bus(7 downto 0);
+					msgaddr2 <= data_bus(7 downto 0);
+					msgdata2 <= data_bus(15 downto 8);
 				when others => 
 					msgaddr <= msgaddr; 
 					msgdata <= msgdata;
@@ -75,7 +77,7 @@ begin
 	end if; -- clk'event
 end process pic2fpga;
 		
-data_bus(7 downto 0) <= msgdata when ((busaddr = TEST1FPGA2PIC) AND (ior = '1')) else
-								msgdata when ((busaddr = TEST2FPGA2PIC) AND (ior = '1')) else
+data_bus(7 downto 0) <= msgdata1 when ((busaddr = TEST1FPGA2PIC) AND (ior = '1')) else
+								msgdata2 when ((busaddr = TEST2FPGA2PIC) AND (ior = '1')) else
 								"ZZZZZZZZ"; 
 end arch;								 
