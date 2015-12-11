@@ -1,0 +1,324 @@
+-- Program for Alt
+-- This program GLC part number 4-00xxxx
+-- Used in assembly 2-xxxx
+-- Copyright General Lasertronics Corp. 2009
+-- Based on MarkII ControlBoard laserctl.vhd
+-- To simplify- this is NOT compatible with MarkII WHs
+-- This structure communicates with WH via a bidirectional serial line
+-- It checks synronization with the WH receives the fast data(pulse, retro,
+-- other errors, illum calib bit) and inserts/ latches the low speed
+-- messages data bits.
+-- RevD add IncandInt
+-- RevE make work with Mark2 H,W WHs
+-- RevF Correct polarities of serial in bits; add retro error bit, WHisMark3bit
+-- RevF Add data back to WH for Mark2
+-- RevG Change QT, Firsthalf to guarantee sync with bitcounter (line 177)
+-- RevO Make bits signals depend of Mark 2/3
+-- RevP correct bit to WH 2,3
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.STD_logic_ARITH.all;
+use ieee.std_logic_unsigned.all;
+
+entity WHSerialIntf is port (
+	clk, rst			:in 	std_logic;
+	OneMHz				:in		std_logic;
+	TenkHz				:out	std_logic;
+	TenkHzInt			:out	std_logic;		--Interrupt to CPU
+	LaserClock			:out	std_logic;		-- to laser
+	
+	ColorInt				:out	std_logic;		-- to coloroperations
+	IncandInt			:out	std_logic;		
+	
+	Pserdata_inA		:in 	std_logic;		--Serial to WH
+	Pserdata_out		:out 	std_logic;
+	Pxmitenable			:out 	std_logic;
+	Psynced_LED			:out 	std_logic;
+	Psynced				:out 	std_logic;
+
+	
+	WHpulseerror		:out 	std_logic;		--to control state machine
+	WHretroerror		:out	std_logic;
+
+	WHtemperror 		:out 	std_logic;
+	WHtriggerbut		:out	std_logic;			
+	WHarmbutton			:out	std_logic;	
+	AlignLaserOff		:out	std_logic;
+	WHColorOK			:out	std_logic;
+	WHisMark3			:out	std_logic;		
+	Firetime				:out	std_logic;
+	Mk3Inbit8			:out 	std_logic;		-- spare (in MK3)serial bit from WH
+
+	M3AlignLaserOn		:in	std_logic;		-- in mark3, comes form message
+	ArmedLED				:in	std_logic;		-- to send dat back to WH
+	Fault2SCB			:in	std_logic;
+	FiringLED			:in	std_logic;
+	BScanIndex			:out	std_logic_vector(6 downto 0);
+	data2WH				:in	std_logic;		-- to/from CPU Intf
+	addr2WH				:in	std_logic;
+	datafromWH			:out	std_logic;
+	addrfromWH			:out	std_logic);
+
+end WHSerialIntf;
+
+architecture statemach of WHSerialIntf is
+
+	signal	qt					: std_logic;			-- .5 MHz, used to make firsthalftime
+	signal	firsthalftime	: std_logic;			-- high for 2 usec, low for 2 used
+	signal	bitcounter		: integer range 0 to 127;
+
+	signal	serdata_out		: std_logic;			-- serial data out to wh
+	signal	serdata_in		: std_logic;			-- serial data in from to wh
+	
+	signal	firsthalfdata	: std_logic;			-- saved data from 1st half bit time
+	signal	xmitenable		: std_logic;			-- direction bit for xceiver
+	signal	synced			: std_logic;			-- On for good data 
+	
+	signal 	Armbutton		: std_logic;
+	signal 	Triggerbut		: std_logic;
+	signal 	IWHisMark3		: std_logic;
+	signal	M2AlignLaserOn	: std_logic;
+	signal	ScanIndex		: std_logic_vector(6 downto 0);
+
+	CONSTANT strobetime		: integer range 0 to 3   :=3; --1 usec after edge
+	CONSTANT oneusec			: integer range 0 to 3   :=3; --4 clocks per usec
+	CONSTANT pulsetime		: integer range 0 to 127 :=100; --usec per laser pulse
+	
+--Time us	Direction	Data		first 2us is true, second 2us is inverted
+--							MK2							MK3
+--0 - 5		to WH		1
+--5- 10 		to WH		0
+--10-14		to WH		0 Not used
+--14-18		to WH		1 Not used
+--18-22		to WH		2 Not used
+--22-26		to WH		3 Not used
+--26-30		to WH		low speed address
+--30-34		to WH		low speed data
+
+--34-38		from WH		0 pulse_det_OK -  
+--38-42		from WH		1 TempOK (MK2), Illumination calib mode
+--42-46		from WH		2 pulse_retro_OK
+--46-50		from WH		3 spareerror
+--50-54		from WH		4 ToWHTime4 off(MK2)/Not used
+--54-58		from WH		5 ArmButtonOff(MK2)/ Not used
+--58-62		from WH		6 ColorHi(MK2)/Not used
+--62-66		from WH		7 FireHi(MK2)/ Not used
+--66-70		from WH		8 Align laser on
+--70-74		from WH		9 0 for Mark2, 1 for Mk3
+--74-78		from WH		10 low speed address
+--78-82		from WH		11 low speed data
+--82-86		from WH		12 Not used
+--86-90		from WH		13 Not used
+--90-94		from WH		14 Not used
+	
+	CONSTANT start1s	 		: integer range 0 to 127 :=0; 	-- times to send data to WH
+	CONSTANT start1e	 		: integer range 0 to 127 :=5; 
+	CONSTANT start2s	 		: integer range 0 to 127 :=5; 
+	CONSTANT start2e	 		: integer range 0 to 127 :=10; 
+	CONSTANT ToWHTime0s 		: integer range 0 to 127 :=10; -- =10+4* bit number 0
+	CONSTANT ToWHTime0e 		: integer range 0 to 127 :=14; -- =14+4* bit number 0
+	CONSTANT ToWHTime1s 		: integer range 0 to 127 :=14; -- =10+4* bit number 1
+	CONSTANT ToWHTime1e 		: integer range 0 to 127 :=18; -- =14+4* bit number 1
+	CONSTANT ToWHTime2s		 	: integer range 0 to 127 :=18; -- =10+4* bit number 2
+	CONSTANT ToWHTime2e		 	: integer range 0 to 127 :=22; -- =14+4* bit number 2
+	CONSTANT ToWHTime3s	 		: integer range 0 to 127 :=22; -- =10+4* bit number 3
+	CONSTANT ToWHTime3e	 		: integer range 0 to 127 :=26; -- =14+4* bit number 3
+	CONSTANT ToWHTime4s			: integer range 0 to 127 :=26; -- =10+4* bit number 4
+	CONSTANT ToWHTime4e			: integer range 0 to 127 :=30; -- =14+4* bit number 4
+	CONSTANT ToWHTime5s 			: integer range 0 to 127 :=30; -- =10+4* bit number 5
+	CONSTANT ToWHTime5e 			: integer range 0 to 127 :=34; -- =14+4* bit number 5
+	
+	CONSTANT xmittimee 			: integer range 0 to 127 :=34; -- =10+4* bit number
+	
+	CONSTANT FromWHTime0s 		: integer range 0 to 127 :=34; --to get data from WH 0
+	CONSTANT FromWHTime0e 		: integer range 0 to 127 :=38; -- = 34+4* bit number
+	CONSTANT FromWHTime1s 		: integer range 0 to 127 :=38; --1
+	CONSTANT FromWHTime1e 		: integer range 0 to 127 :=42; 
+	CONSTANT FromWHTime2s 		: integer range 0 to 127 :=42; --2  -- MK2
+	CONSTANT FromWHTime2e 		: integer range 0 to 127 :=46;
+	CONSTANT FromWHTime3s 		: integer range 0 to 127 :=46; --3
+	CONSTANT FromWHTime3e 		: integer range 0 to 127 :=50;
+	CONSTANT FromWHTime4s		: integer range 0 to 127 :=50; --4
+	CONSTANT FromWHTime4e		: integer range 0 to 127 :=54; 
+	CONSTANT FromWHTime5s		: integer range 0 to 127 :=54; --5
+	CONSTANT FromWHTime5e		: integer range 0 to 127 :=58; 
+	CONSTANT FromWHTime6s		: integer range 0 to 127 :=58; --6
+	CONSTANT FromWHTime6e		: integer range 0 to 127 :=62; 
+	CONSTANT FromWHTime7s		: integer range 0 to 127 :=62; --7
+	CONSTANT FromWHTime7e		: integer range 0 to 127 :=66; 
+	CONSTANT FromWHTime8s		: integer range 0 to 127 :=66; --8
+	CONSTANT FromWHTime8e		: integer range 0 to 127 :=70; 
+	CONSTANT FromWHTime9s		: integer range 0 to 127 :=70; --9
+	CONSTANT FromWHTime9e		: integer range 0 to 127 :=74; 
+	CONSTANT FromWHTime10s		: integer range 0 to 127 :=74; --10
+	CONSTANT FromWHTime10e	 	: integer range 0 to 127 :=78; 
+	CONSTANT FromWHTime11s	 	: integer range 0 to 127 :=78; --11
+	CONSTANT FromWHTime11e	 	: integer range 0 to 127 :=82;
+	CONSTANT FromWHTime12s	 	: integer range 0 to 127 :=82; --12
+	CONSTANT FromWHTime12e	 	: integer range 0 to 127 :=86;
+	CONSTANT FromWHTime13s	 	: integer range 0 to 127 :=86; --13
+	CONSTANT FromWHTime13e	 	: integer range 0 to 127 :=90;
+	CONSTANT FromWHTime14s		: integer range 0 to 127 :=90; --14
+	CONSTANT FromWHTime14e		: integer range 0 to 127 :=94; 
+	CONSTANT receivetimee		: integer range 0 to 127 :=94; --15
+	CONSTANT CPUInttime			: integer range 0 to 127 :=94; --15
+	CONSTANT ColorIntTime 		: integer range 0 to 127 :=91;	
+		
+BEGIN synchronize: process (clk, rst, OneMHz, serdata_in)
+
+BEGIN
+	IF rst = '0'
+	THEN 
+		synced <= '0';
+--		qt <= '0';
+--		firsthalftime <= '1';
+					
+					
+	ELSIF (clk'event and clk='1') THEN
+		IF OneMHz = '1' THEN 
+			IF bitcounter = pulsetime-1   		
+			THEN bitcounter <= 0;
+			ELSE bitcounter <= bitcounter +1;
+			END IF;
+
+			IF (bitcounter = 0) THEN 
+				synced <= '1';						-- set to good
+			ELSE IF (bitcounter >=xmittimee) AND (bitcounter <= receivetimee) AND QT='1' THEN-- added AND QT RevI
+					IF	firsthalftime = '1' THEN
+						firsthalfdata <= serdata_in;
+					ELSE IF firsthalfdata = serdata_in THEN
+								synced <= '0';
+							END IF;
+					END IF;  --IF	firsthalftime
+				END IF;  --IF (bitcounter >=xmittimee
+				IF IWHisMark3= '1' THEN
+					CASE bitcounter IS				--Rev I moved case out of if bitcounter >.. AND <..
+						WHEN FromWHTime0e  	=> Armbutton 	<= firsthalfdata; 		--0(bit is OK)
+						WHEN FromWHTime1e  	=> ScanIndex(0)	<= firsthalfdata;  		--1  --ALWAYS 0
+						WHEN FromWHTime2e 	=> ScanIndex(1) <= firsthalfdata; 		--2
+						WHEN FromWHTime3e 	=> ScanIndex(2) <= firsthalfdata; 		--3
+						WHEN FromWHTime4e 	=> ScanIndex(3) <= firsthalfdata; 		--4
+						WHEN FromWHTime5e 	=> ScanIndex(4) <= firsthalfdata; 		--5
+						WHEN FromWHTime6e 	=> ScanIndex(5) <= firsthalfdata; 		--6
+						WHEN FromWHTime7e 	=> ScanIndex(6) <= firsthalfdata; 		--7
+		
+						WHEN FromWHTime8e 	=> Mk3Inbit8	 <= firsthalfdata;  		--8
+															BScanIndex <= ScanIndex;
+						WHEN FromWHTime9e	=> IWHisMark3   	<= firsthalfdata;  		--9
+						WHEN FromWHTime10e	=> addrfromWH   <= firsthalfdata;  		--10
+						WHEN FromWHTime11e  => datafromWH   <= firsthalfdata;  		--11
+						WHEN FromWHTime12e  => WHtemperror	<= firsthalfdata;  		--12  --ALWAYS 0
+						WHEN FromWHTime13e  => WHretroerror	<= firsthalfdata;  		--13  --ALWAYS 0
+						WHEN FromWHTime14e	=> WHColorOK	<= firsthalfdata;  		--14
+											  Psynced_LED  	<= synced;
+											  Psynced  	   	<= synced;
+	--	Using bits known to be 0	  WHpulseerror	<= '0';  -- Temporary until 
+	--								  WHtemperror	<= '0';	 -- use of status message
+	--								  WHretroerror	<= '0';	-- is implemented
+						WHEN OTHERS => NULL;
+					END CASE;
+				ELSE			-- Mark 2 interface
+					CASE bitcounter IS				
+						WHEN FromWHTime0e  	=> WHpulseerror <= NOT firsthalfdata;  	--0(bit is OK)
+						WHEN FromWHTime1e  	=> WHtemperror  <= NOT firsthalfdata;  	--1
+						WHEN FromWHTime2e 	=> WHretroerror <= NOT firsthalfdata;  	--2
+			--			WHEN FromWHTime3e 	=> WHretroerror <= NOT firsthalfdata;  	--3
+						WHEN FromWHTime4e		=> Triggerbut 	 <= NOT firsthalfdata;  	--4
+						WHEN FromWHTime5e		=> Armbutton  	 <= NOT firsthalfdata;  	--5
+			--			WHEN FromWHTime6e		=> Armbutton  	 <= NOT firsthalfdata;  	--6
+			--			WHEN FromWHTime7e		=> Armbutton  	 <= NOT firsthalfdata;		--7
+						WHEN FromWHTime8e 	=> M2AlignLaserOn <= firsthalfdata;  		--8
+						WHEN FromWHTime9e		=> IWHisMark3   <= firsthalfdata;  			--9
+			--			WHEN FromWHTime10e	=>    			 <= firsthalfdata;  			--10
+			--			WHEN FromWHTime11e  	=> 				 <= firsthalfdata;  			--11
+			--			WHEN FromWHTime12e	=> 			  	 <= NOT firsthalfdata;  	--12
+			--			WHEN FromWHTime13e	=>   			    <= NOT firsthalfdata;  	--13
+						WHEN FromWHTime14e	=> WHColorOK	 <= firsthalfdata;  			--14
+												Psynced_LED <= synced;
+												Psynced  	<= synced;
+						WHEN OTHERS => NULL;
+					END CASE;
+				END IF; --IWHisMark3= '1'	
+			END IF; --IF (bitcounter = 0)
+		END IF; --IF OneMHz
+	END IF; --IF rst
+
+END PROCESS synchronize;
+
+-- combinational logic, allow changes in input polarities etc.
+	serdata_in 	<= Pserdata_inA  ;
+
+	serdata_out <= '1' 	WHEN bitcounter >= start1s 		AND bitcounter < start1e
+		ELSE	'0'			WHEN bitcounter >= start2s 		AND bitcounter < start2e
+		
+		ELSE	FiringLED	WHEN bitcounter >= ToWHTime0s 	AND bitcounter < ToWHTime0e AND IWHisMark3= '1'			
+		ELSE	'0'			WHEN bitcounter >= ToWHTime1s 	AND bitcounter < ToWHTime1e AND IWHisMark3= '1'				
+		ELSE	'0'			WHEN bitcounter >= ToWHTime2s 	AND bitcounter < ToWHTime2e AND IWHisMark3= '1'				
+		ELSE	'0'			WHEN bitcounter >= ToWHTime3s  	AND bitcounter < ToWHTime3e AND IWHisMark3= '1'
+		ELSE	addr2WH		WHEN bitcounter >= ToWHTime4s		AND bitcounter < ToWHTime4e AND IWHisMark3= '1'
+		ELSE	data2WH		WHEN bitcounter >= ToWHTime5s		AND bitcounter < ToWHTime5e AND IWHisMark3= '1'
+	
+		ELSE	ArmedLED	WHEN bitcounter >= ToWHTime0s 		AND bitcounter < ToWHTime0e AND IWHisMark3= '0'	
+		ELSE 	Fault2SCB   WHEN bitcounter >= ToWHTime1s  	AND bitcounter < ToWHTime1e AND IWHisMark3= '0'
+		ELSE NOT Fault2SCB	WHEN bitcounter >= ToWHTime2s AND bitcounter < ToWHTime2e AND IWHisMark3= '0'
+		ELSE	FiringLED	WHEN bitcounter >= ToWHTime3s  	AND bitcounter < ToWHTime3e AND IWHisMark3= '0'
+		ELSE	Triggerbut	WHEN bitcounter >= ToWHTime4s  	AND bitcounter < ToWHTime4e AND IWHisMark3= '0'
+		ELSE	Armbutton	WHEN bitcounter >= ToWHTime5s  	AND bitcounter < ToWHTime5e AND DailySteals.com= '0'	
+		ELSE	'0';			
+
+qswcleanreset:process(clk, d1qsw, d2qsw, d3qsw, qswreset2fpga, qswfailreset)
+begin
+	if (rising_edge(clk)) then
+		d3qsw <= d2qsw;
+		d2qsw <= d1qsw;
+		d1qsw <= qswreset2fpga;					-- qswitch reset signal from system controller
+		qswfailreset <= d1qsw and not d3qsw;-- clocked reset output
+	end if;	
+end process qswcleanreset;		
+
+You need a second signal to be the delayed version. 
+In the above case, d2qsw will be a delayed version of d1qsw 
+which in turn is a delayed version of qswreset2fpga. 
+Each delay will be one clock cycle.
+
+Qswfailreset would be asserted for one cycle two cycles 
+
+after a falling edge on qswreset2fpga.If you checked this 
+stuff in modelsim (even just as a little side project 
+seperate from your main code) it would be much 
+easier to see these relationships.
+
+Describe what the output signal needs to do 
+relative to the level and phase of the input signals
+
+
+		
+	Pserdata_out	<= NOT serdata_out	WHEN firsthalftime = '0' AND bitcounter >= start2e 
+					AND bitcounter < xmittimee
+		ELSE serdata_out;
+		
+	xmitenable	<= '1' WHEN (bitcounter >= start1s AND bitcounter < xmittimee)
+					OR (bitcounter >= receivetimee+2) ELSE '0';
+	Pxmitenable <= xmitenable;
+	
+	TenkHz <= '1' WHEN (bitcounter = 0 AND OneMHz = '1' )ELSE '0';
+	
+	ColorInt	<= '1' WHEN (bitcounter = ColorIntTime) ELSE '0';
+	IncandInt	<= '1' WHEN (bitcounter = 2)	ELSE '0';
+	LaserClock	<= '1' WHEN (bitcounter = 0 AND OneMHz = '0') ELSE '0'; 
+
+	Firetime	<= '1' WHEN (bitcounter >= 0 AND bitcounter < start2e) ELSE '0';
+	
+	WHarmbutton  <= Armbutton;			
+	WHtriggerbut <= Triggerbut;
+	WHisMark3	 <= IWHisMark3;
+	
+	AlignLaserOff <= NOT M3AlignLaserOn WHEN IWHisMark3 = '1'
+			ELSE	NOT M2AlignLaserOn;
+	
+	QT <='1' WHEN ((bitcounter MOD 2) = 1) ELSE '0';		--Added revF
+	firsthalftime <= '1' WHEN (((bitcounter MOD 4) = 2) OR ((bitcounter MOD 4) = 3)) ELSE '0';
+	TenkHzInt <= '1' WHEN  bitcounter = CPUInttime ELSE '0';
+	
+END statemach;
