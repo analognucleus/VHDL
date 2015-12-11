@@ -277,21 +277,6 @@ begin
 	end if;	
 end process qswcleanreset;		
 
-You need a second signal to be the delayed version. 
-In the above case, d2qsw will be a delayed version of d1qsw 
-which in turn is a delayed version of qswreset2fpga. 
-Each delay will be one clock cycle.
-
-Qswfailreset would be asserted for one cycle two cycles 
-
-after a falling edge on qswreset2fpga.If you checked this 
-stuff in modelsim (even just as a little side project 
-seperate from your main code) it would be much 
-easier to see these relationships.
-
-Describe what the output signal needs to do 
-relative to the level and phase of the input signals
-
 
 		
 	Pserdata_out	<= NOT serdata_out	WHEN firsthalftime = '0' AND bitcounter >= start2e 
