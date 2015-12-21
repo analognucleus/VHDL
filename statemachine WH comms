@@ -22,11 +22,14 @@ use ieee.STD_logic_ARITH.all;
 use ieee.std_logic_unsigned.all;
 
 entity WHSerialIntf is port (
-	clk, rst			:in 	std_logic;
-	OneMHz				:in		std_logic;
+	clk, rst				:in 	std_logic;
+	OneMHz				:in	std_logic;
 	TenkHz				:out	std_logic;
 	TenkHzInt			:out	std_logic;		--Interrupt to CPU
 	LaserClock			:out	std_logic;		-- to laser
+	clocktestL2			:out	std_logic;
+--	clocktestM2			:out	std_logic;		
+	FourMHz				:in	std_logic;		-- WH comm counter	
 	
 	ColorInt				:out	std_logic;		-- to coloroperations
 	IncandInt			:out	std_logic;		
@@ -80,37 +83,43 @@ architecture statemach of WHSerialIntf is
 	signal 	IWHisMark3		: std_logic;
 	signal	M2AlignLaserOn	: std_logic;
 	signal	ScanIndex		: std_logic_vector(6 downto 0);
-
+	signal	speedup			: std_logic;
+	signal	speeddown		: std_logic;
+	signal 	commcount		: integer range 0 to 3;
+	signal 	whsync			: integer range 0 to 3;
+	
 	CONSTANT strobetime		: integer range 0 to 3   :=3; --1 usec after edge
 	CONSTANT oneusec			: integer range 0 to 3   :=3; --4 clocks per usec
 	CONSTANT pulsetime		: integer range 0 to 127 :=100; --usec per laser pulse
 	
+	
 --Time us	Direction	Data		first 2us is true, second 2us is inverted
---							MK2							MK3
---0 - 5		to WH		1
---5- 10 		to WH		0
---10-14		to WH		0 Not used
---14-18		to WH		1 Not used
---18-22		to WH		2 Not used
---22-26		to WH		3 Not used
---26-30		to WH		low speed address
---30-34		to WH		low speed data
 
---34-38		from WH		0 pulse_det_OK -  
---38-42		from WH		1 TempOK (MK2), Illumination calib mode
---42-46		from WH		2 pulse_retro_OK
---46-50		from WH		3 spareerror
---50-54		from WH		4 ToWHTime4 off(MK2)/Not used
---54-58		from WH		5 ArmButtonOff(MK2)/ Not used
---58-62		from WH		6 ColorHi(MK2)/Not used
---62-66		from WH		7 FireHi(MK2)/ Not used
---66-70		from WH		8 Align laser on
---70-74		from WH		9 0 for Mark2, 1 for Mk3
+--0 - 5		to WH			1
+--5- 10 		to WH			0
+--10-14		to WH			0 Laser fired
+--14-18		to WH			1 Not used
+--18-22		to WH			2 Not used
+--22-26		to WH			3 Not used
+--26-30		to WH			low speed address
+--30-34		to WH			low speed data
+
+--34-38		from WH		0 Open shutter 
+--38-42		from WH		1 scan index 0
+--42-46		from WH		2 scan index 1
+--46-50		from WH		3 scan index 2
+--50-54		from WH		4 scan index 3
+--54-58		from WH		5 scan index 4
+--58-62		from WH		6 scan index 5
+--62-66		from WH		7 scan index 6
+--66-70		from WH		8 Not used
+--70-74		from WH		9  1 for Mk3
 --74-78		from WH		10 low speed address
 --78-82		from WH		11 low speed data
---82-86		from WH		12 Not used
---86-90		from WH		13 Not used
---90-94		from WH		14 Not used
+--82-86		from WH		12 speedup
+--86-90		from WH		13 slowdown
+--90-94		from WH		14 OK to fire
+
 	
 	CONSTANT start1s	 		: integer range 0 to 127 :=0; 	-- times to send data to WH
 	CONSTANT start1e	 		: integer range 0 to 127 :=5; 
@@ -165,18 +174,29 @@ architecture statemach of WHSerialIntf is
 	CONSTANT CPUInttime			: integer range 0 to 127 :=94; --15
 	CONSTANT ColorIntTime 		: integer range 0 to 127 :=91;	
 		
-BEGIN synchronize: process (clk, rst, OneMHz, serdata_in)
+BEGIN synchronize: process (clk, rst, OneMHz, serdata_in) -- commcount, whsync
 
 BEGIN
 	IF rst = '0'
 	THEN 
 		synced <= '0';
+--		commcount <= 2;
 --		qt <= '0';
 --		firsthalftime <= '1';
 					
 					
-	ELSIF (clk'event and clk='1') THEN
-		IF OneMHz = '1' THEN 
+	ELSIF rising_edge(clk) then 
+		
+--		if(FourMHz = '1') then 
+--			if(commcount = 3) then
+--				commcount <= 0;
+--			else
+--				commcount <= commcount + 1;
+--			end if; 
+--		end if;
+	
+	
+		if(commcount = 2) then -- IF OneMHz = '1' THEN -- 
 			IF bitcounter = pulsetime-1   		
 			THEN bitcounter <= 0;
 			ELSE bitcounter <= bitcounter +1;
@@ -235,6 +255,7 @@ BEGIN
 			--			WHEN FromWHTime12e	=> 			  	 <= NOT firsthalfdata;  	--12
 			--			WHEN FromWHTime13e	=>   			    <= NOT firsthalfdata;  	--13
 						WHEN FromWHTime14e	=> WHColorOK	 <= firsthalfdata;  			--14
+						
 												Psynced_LED <= synced;
 												Psynced  	<= synced;
 						WHEN OTHERS => NULL;
@@ -245,6 +266,27 @@ BEGIN
 	END IF; --IF rst
 
 END PROCESS synchronize;
+
+whcommsync : process (clk, FourMHz, commcount) 
+begin
+	if rising_edge(clk) then 
+		if(FourMHz = '1') then 
+			if(commcount = 3) then
+				commcount <= 0;
+			else
+				commcount <= commcount + 1;
+			end if; 
+		end if;
+	end if;
+
+--		if(speedup = '1') then -- and (slowdown = '0')) then
+--			whsync <= 1;
+--		elsif(slowdown = '1') then --  and (speedup = '0')) then
+--			whsync <= 3;
+--		else 
+--			whsync <= 2;	
+--		end if;
+end process whcommsync;
 
 -- combinational logic, allow changes in input polarities etc.
 	serdata_in 	<= Pserdata_inA  ;
@@ -264,18 +306,8 @@ END PROCESS synchronize;
 		ELSE NOT Fault2SCB	WHEN bitcounter >= ToWHTime2s AND bitcounter < ToWHTime2e AND IWHisMark3= '0'
 		ELSE	FiringLED	WHEN bitcounter >= ToWHTime3s  	AND bitcounter < ToWHTime3e AND IWHisMark3= '0'
 		ELSE	Triggerbut	WHEN bitcounter >= ToWHTime4s  	AND bitcounter < ToWHTime4e AND IWHisMark3= '0'
-		ELSE	Armbutton	WHEN bitcounter >= ToWHTime5s  	AND bitcounter < ToWHTime5e AND DailySteals.com= '0'	
+		ELSE	Armbutton	WHEN bitcounter >= ToWHTime5s  	AND bitcounter < ToWHTime5e AND IWHisMark3= '0'	
 		ELSE	'0';			
-
-qswcleanreset:process(clk, d1qsw, d2qsw, d3qsw, qswreset2fpga, qswfailreset)
-begin
-	if (rising_edge(clk)) then
-		d3qsw <= d2qsw;
-		d2qsw <= d1qsw;
-		d1qsw <= qswreset2fpga;					-- qswitch reset signal from system controller
-		qswfailreset <= d1qsw and not d3qsw;-- clocked reset output
-	end if;	
-end process qswcleanreset;		
 
 
 		
@@ -287,11 +319,11 @@ end process qswcleanreset;
 					OR (bitcounter >= receivetimee+2) ELSE '0';
 	Pxmitenable <= xmitenable;
 	
-	TenkHz <= '1' WHEN (bitcounter = 0 AND OneMHz = '1' )ELSE '0';
+	TenkHz <= '1' WHEN (bitcounter = 0 AND OneMHz = '1' )ELSE '0'; -- (commcount = whsync)
 	
 	ColorInt	<= '1' WHEN (bitcounter = ColorIntTime) ELSE '0';
 	IncandInt	<= '1' WHEN (bitcounter = 2)	ELSE '0';
-	LaserClock	<= '1' WHEN (bitcounter = 0 AND OneMHz = '0') ELSE '0'; 
+	LaserClock	<= '1' WHEN (bitcounter = 0 AND OneMHz = '0') ELSE '0'; -- not (commcount = whsync)
 
 	Firetime	<= '1' WHEN (bitcounter >= 0 AND bitcounter < start2e) ELSE '0';
 	
@@ -306,4 +338,24 @@ end process qswcleanreset;
 	firsthalftime <= '1' WHEN (((bitcounter MOD 4) = 2) OR ((bitcounter MOD 4) = 3)) ELSE '0';
 	TenkHzInt <= '1' WHEN  bitcounter = CPUInttime ELSE '0';
 	
+	
+	clocktestL2 <= OneMHz;
+
 END statemach;
+
+
+ -- prev IF OneMHz = '1' THEN -- OneMHz used to sequence comms
+			-- LCB begins comms (with WH serdata_out line below) and syncs comms
+			-- Constants above refer to data assignments within time parameters
+			-- s = start , e = end of data
+			-- four clock cycles = 1 usec, oneMHz = 1 clock cycle = 250ns
+			-- MultiWHsync requires one clock cycle faster or slower
+			-- JT WHDec8 code uses waitS1 code but does no syncing WH is waiting
+			-- to see if master is high when it starts if high then sends slowdown
+			-- so for testing only need to lift master pulse pin high constantly
+			-- *Option 1: 	use a 4MHz clock and use four divisions for triggers
+			-- 				regular 	= trigger on 2 count 
+			-- 				speedup 	= trigger on 1 count 
+			-- 				slowdown	= trigger on 3 count
+			-- Option 2: 	adjust data constant times by a clock cycle depending on status 
+			--					of speedup and slowdown bits.
