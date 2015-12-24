@@ -28,7 +28,7 @@ entity WHSerialIntf is port (
 	TenkHzInt			:out	std_logic;		--Interrupt to CPU
 	LaserClock			:out	std_logic;		-- to laser
 	clocktestL2			:out	std_logic;
---	clocktestM2			:out	std_logic;		
+	clocktestM2			:out	std_logic;		
 	FourMHz				:in	std_logic;		-- WH comm counter	
 	
 	ColorInt				:out	std_logic;		-- to coloroperations
@@ -84,9 +84,22 @@ architecture statemach of WHSerialIntf is
 	signal	M2AlignLaserOn	: std_logic;
 	signal	ScanIndex		: std_logic_vector(6 downto 0);
 	signal	speedup			: std_logic;
-	signal	speeddown		: std_logic;
+	signal	slowdown			: std_logic;
 	signal 	commcount		: integer range 0 to 3;
 	signal 	whsync			: integer range 0 to 3;
+	signal	FourMHz_d1		: std_logic;
+	signal	FourMHz_d2		: std_logic;
+	signal	FourMHz_d3		: std_logic;
+	signal 	four_MHz_int	: std_logic;
+	signal	one_MHz_int		: std_logic;
+	signal 	clockstate		: integer range 0 to 127;
+	SIGNAL 	div4				: integer range 0 to 3;
+	SIGNAL 	div5				: integer range 0 to 4;
+	signal	onemhzcomm		: std_logic;
+	signal	delay1			: std_logic;
+	signal	delay2			: std_logic;
+	signal	delay3			: std_logic;
+	signal	delay4			: std_logic;
 	
 	CONSTANT strobetime		: integer range 0 to 3   :=3; --1 usec after edge
 	CONSTANT oneusec			: integer range 0 to 3   :=3; --4 clocks per usec
@@ -121,14 +134,14 @@ architecture statemach of WHSerialIntf is
 --90-94		from WH		14 OK to fire
 
 	
-	CONSTANT start1s	 		: integer range 0 to 127 :=0; 	-- times to send data to WH
-	CONSTANT start1e	 		: integer range 0 to 127 :=5; 
-	CONSTANT start2s	 		: integer range 0 to 127 :=5; 
-	CONSTANT start2e	 		: integer range 0 to 127 :=10; 
-	CONSTANT ToWHTime0s 		: integer range 0 to 127 :=10; -- =10+4* bit number 0
-	CONSTANT ToWHTime0e 		: integer range 0 to 127 :=14; -- =14+4* bit number 0
-	CONSTANT ToWHTime1s 		: integer range 0 to 127 :=14; -- =10+4* bit number 1
-	CONSTANT ToWHTime1e 		: integer range 0 to 127 :=18; -- =14+4* bit number 1
+	CONSTANT start1s	 			: integer range 0 to 127 :=0; 	-- times to send data to WH
+	CONSTANT start1e	 			: integer range 0 to 127 :=5; 
+	CONSTANT start2s	 			: integer range 0 to 127 :=5; 
+	CONSTANT start2e	 			: integer range 0 to 127 :=10; 
+	CONSTANT ToWHTime0s 			: integer range 0 to 127 :=10; -- =10+4* bit number 0
+	CONSTANT ToWHTime0e 			: integer range 0 to 127 :=14; -- =14+4* bit number 0
+	CONSTANT ToWHTime1s 			: integer range 0 to 127 :=14; -- =10+4* bit number 1
+	CONSTANT ToWHTime1e 			: integer range 0 to 127 :=18; -- =14+4* bit number 1
 	CONSTANT ToWHTime2s		 	: integer range 0 to 127 :=18; -- =10+4* bit number 2
 	CONSTANT ToWHTime2e		 	: integer range 0 to 127 :=22; -- =14+4* bit number 2
 	CONSTANT ToWHTime3s	 		: integer range 0 to 127 :=22; -- =10+4* bit number 3
@@ -174,7 +187,7 @@ architecture statemach of WHSerialIntf is
 	CONSTANT CPUInttime			: integer range 0 to 127 :=94; --15
 	CONSTANT ColorIntTime 		: integer range 0 to 127 :=91;	
 		
-BEGIN synchronize: process (clk, rst, OneMHz, serdata_in) -- commcount, whsync
+BEGIN synchronize: process (clk, rst, commcount, whsync, commcount, whsync, OneMHz, serdata_in) -- commcount, whsync
 
 BEGIN
 	IF rst = '0'
@@ -185,19 +198,10 @@ BEGIN
 --		firsthalftime <= '1';
 					
 					
-	ELSIF rising_edge(clk) then 
-		
---		if(FourMHz = '1') then 
---			if(commcount = 3) then
---				commcount <= 0;
---			else
---				commcount <= commcount + 1;
---			end if; 
---		end if;
+	ELSIF (clk'event and clk='1') THEN
 	
-	
-		if(commcount = 2) then -- IF OneMHz = '1' THEN -- 
-			IF bitcounter = pulsetime-1   		
+		if(delay4 = '1') then -- if(commcount = whsync) and (four_MHz_int = '1') then -- IF OneMHz = '1' THEN -- if(onemhzcomm = '1') then
+ 			IF bitcounter = pulsetime-1   		
 			THEN bitcounter <= 0;
 			ELSE bitcounter <= bitcounter +1;
 			END IF;
@@ -267,26 +271,79 @@ BEGIN
 
 END PROCESS synchronize;
 
-whcommsync : process (clk, FourMHz, commcount) 
+
+clockgen2: process
 begin
-	if rising_edge(clk) then 
-		if(FourMHz = '1') then 
+wait until rising_edge(clk);
+	if(rst='0') then 
+		div4 <= 0;
+		div5 <= 0;
+	else 
+		if clockstate = 19 then 
+			clockstate <= 0;
+		else 
+			clockstate <= clockstate + 1;
+		end if;	
+	
+		if clockstate = 0 then
+			One_MHz_int <= '1';
+		else
+			One_MHz_int <= '0';
+		end if;
+
+		if div5 = 4 then
+			div5 <= 0; 
+		else 
+			div5 <= div5 +1; 
+		end if;
+				
+		if div5 = 0 then
+			four_MHz_int <= '1'; 
+		else 
+			four_MHz_int <= '0';
+		end if;
+		
+	end if;	
+	
+delay1 <= onemhzcomm;
+delay2 <= delay1;
+delay3 <= delay2;
+delay4 <= delay3;
+
+clocktestL2 <= delay4;
+clocktestM2 <= four_MHz_int;
+
+end process clockgen2;
+
+
+whcommsync : process 
+begin
+	wait until rising_edge(clk); 
+		if(four_MHz_int = '1') then 
 			if(commcount = 3) then
 				commcount <= 0;
 			else
 				commcount <= commcount + 1;
 			end if; 
 		end if;
-	end if;
+		
+		if(commcount = whsync) and (four_MHz_int = '1') then 
+			onemhzcomm <= '1';
+		else
+			onemhzcomm <= '0';
+		end if;
+	
 
---		if(speedup = '1') then -- and (slowdown = '0')) then
---			whsync <= 1;
---		elsif(slowdown = '1') then --  and (speedup = '0')) then
---			whsync <= 3;
---		else 
---			whsync <= 2;	
---		end if;
+		if((speedup = '1') and (slowdown = '0')) then
+			whsync <= 1;
+		elsif((slowdown = '1') and (speedup = '0')) then
+			whsync <= 3;
+		else 
+			whsync <= 2;	
+		end if;
 end process whcommsync;
+
+
 
 -- combinational logic, allow changes in input polarities etc.
 	serdata_in 	<= Pserdata_inA  ;
@@ -310,6 +367,7 @@ end process whcommsync;
 		ELSE	'0';			
 
 
+
 		
 	Pserdata_out	<= NOT serdata_out	WHEN firsthalftime = '0' AND bitcounter >= start2e 
 					AND bitcounter < xmittimee
@@ -319,11 +377,11 @@ end process whcommsync;
 					OR (bitcounter >= receivetimee+2) ELSE '0';
 	Pxmitenable <= xmitenable;
 	
-	TenkHz <= '1' WHEN (bitcounter = 0 AND OneMHz = '1' )ELSE '0'; -- (commcount = whsync)
+	TenkHz <= '1' WHEN (bitcounter = 0 AND delay4 = '1' )ELSE '0'; -- (commcount = whsync) -- One_MHz_int = '1'
 	
 	ColorInt	<= '1' WHEN (bitcounter = ColorIntTime) ELSE '0';
 	IncandInt	<= '1' WHEN (bitcounter = 2)	ELSE '0';
-	LaserClock	<= '1' WHEN (bitcounter = 0 AND OneMHz = '0') ELSE '0'; -- not (commcount = whsync)
+	LaserClock	<= '1' WHEN (bitcounter = 0 AND delay4 = '0') ELSE '0'; -- not (commcount = whsync)
 
 	Firetime	<= '1' WHEN (bitcounter >= 0 AND bitcounter < start2e) ELSE '0';
 	
@@ -338,8 +396,6 @@ end process whcommsync;
 	firsthalftime <= '1' WHEN (((bitcounter MOD 4) = 2) OR ((bitcounter MOD 4) = 3)) ELSE '0';
 	TenkHzInt <= '1' WHEN  bitcounter = CPUInttime ELSE '0';
 	
-	
-	clocktestL2 <= OneMHz;
 
 END statemach;
 
@@ -357,5 +413,4 @@ END statemach;
 			-- 				regular 	= trigger on 2 count 
 			-- 				speedup 	= trigger on 1 count 
 			-- 				slowdown	= trigger on 3 count
-			-- Option 2: 	adjust data constant times by a clock cycle depending on status 
-			--					of speedup and slowdown bits.
+			-- Option 2: 	divide data constant timing values by four and shift...
