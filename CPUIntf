@@ -1,8 +1,5 @@
-
--- Interfacing with micro controller
--- Program for Altera 
--- Copyright General Lasertronics Corp. 2013
--- PIC
+-- PIC to FPGA interface using updated 16-bit PMP bus matching workhead PMP comms 
+-- 
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -11,221 +8,499 @@ use ieee.std_logic_unsigned.all;
 
 entity CPUIntf is port 
 (
-	clk, rst		:in 		std_logic;
-	piow, pior		:in 		std_logic;			--from PIC	
-	pmall			:in		std_logic; 			-- address latch
-
-	data_bus		:inout		std_logic_vector(15 downto 0);	--to/from PIC
-	pwrite			:buffer		std_logic;
-	pread			:out		std_logic; 			-- PIC read
+	clk, rst			:in 		std_logic;
+	piow, pior		:in 		std_logic;		--from PIC
+--	addr				:in 		integer range 0 to 31;		
+	pmall				:in		std_logic; 		-- address latch
+	data_bus			:inout	std_logic_vector(15 downto 0);	--to/from PIC
+	pwrite			:buffer	std_logic;
+--	pread				:out		std_logic; 			
 	
 	inmsgdata		:in		std_logic_vector(7 downto 0);	--data message to CPU
 	inmsgaddr		:in		std_logic_vector(5 downto 0);	-- from WH
-	inmsgrdy		:in		std_logic;			-- message ready for CPU (address[7])
-	inmsgmissed		:in		std_logic;			-- message over flow, missed by CPU (address[6]
-	inmsgerror		:in		std_logic;			-- message from WH contains error
-	inmsgsent		:out		std_logic;			-- 1 = received by CPU (status[7])
-					
-	LaserLeak		:in 		std_logic;						
-	TrayLeak		:in 		std_logic;						
-	LowFlowFault		:in 		std_logic;						
-	DoorOpenFault		:in 		std_logic;						
+	inmsgrdy			:in		std_logic;		-- message ready for CPU (address[7])
+	inmsgmissed		:in		std_logic;		-- message over flow, missed by CPU (address[6]
+	inmsgerror		:in		std_logic;		-- message from WH contains error
+	inmsgsent		:out		std_logic;		-- 1 = received by CPU (status[7])
 
-	outmsgdata		:out		std_logic_vector(7 downto 0);	--data message from CPU
+	RetroError		:in		std_logic;		-- from fault sensors- not debounced
+	PulseError		:in		std_logic;		
+--	LaserCurrentLow:in 		std_logic;		-- from fault sensors- debounced					
+	IncandMode		:in		std_logic;
+	LaserOn			:in		std_logic;
+--	CoolantOvertemp:in		std_logic;
+	Inspare3			:in		std_logic;		-- from fault sensors - not debounced
 	
+	LaserFault		:in		std_logic;		-- from fault sensors- debounced
+--	LaserOverTemp	:in 		std_logic;						
+--	LaserUnderTemp	:in 		std_logic;						
+--	LaserLeak		:in 		std_logic;						
+--	TrayLeak			:in 		std_logic;						
+--	LowFlowFault	:in 		std_logic;						
+--	DoorOpenFault	:in 		std_logic;						
+
+	outsplogic1		:out		std_logic;
+	outsplogic2		:out		std_logic;
+	outspvect1		:out		std_logic_vector(7 downto 0);
+	outspvect2		:out		std_logic_vector(7 downto 0);
+	insplogic1		:in		std_logic;
+	insplogic2		:in		std_logic;
+	inspvect1		:in		std_logic_vector(7 downto 0);
+	inspvect2		:in		std_logic_vector(7 downto 0);
+	
+	
+	PAirPresFault	:out		std_logic;		
+	outspare5		:out		std_logic;		-- to HW spare output for test
+	outspare6		:out		std_logic;		-- to HW spare output for test
+	LaserModeCW		:out		std_logic;		-- to HW sets laser mode to CW
+	AlignLaserOn	:out		std_logic;		-- to HW spare output from status out (output from STATUS2FPGA PIC input)
+	FaultOut			:out		std_logic;		-- to HW spare output from status out
+	qswreset2fpga	:out		std_logic;		-- used in ctlstate
+	
+	outmsgdata		:out		std_logic_vector(7 downto 0);	--data message from CPU
 	outmsgaddr		:out		std_logic_vector(5 downto 0);	-- to WH
 	outmsgrdy		:out		std_logic;						
-	outmsgbusy		:in		std_logic;			-- status[7]
+	outmsgbusy		:in		std_logic;							-- status[7]
 
 	ReadRedData		:in		std_logic_vector(7 downto 0);	--to/from Color Ops	
 	ReadBluData		:in		std_logic_vector(7 downto 0);
-	ReadDataReady		:in		std_logic;	
+	ReadDataReady	:in		std_logic;	
 	Gotdata			:out		std_logic;
 	WHisMark3		:in		std_logic;
-	CPUOK2fire		:out		std_logic;
+	CPUOK2fire		:out		std_logic;		-- output from STATUS2FPGA PIC input
 	
+	shutteropen_i	:in		std_logic; 		-- from Ctlstate.vhd (then Lee Laser)
+	qswfailseen_i	:in		std_logic;
+	  
 	ScanIndex		:in		std_logic_vector(6 downto 0);
-	color_spec		:inout		std_logic_vector(7 downto 0);
-	red_thresh_hi		:inout		std_logic_vector(7 downto 0);
-	red_thresh_lo		:inout		std_logic_vector(7 downto 0);
-	blue_thresh_hi		:inout		std_logic_vector(7 downto 0);
-	blue_thresh_lo		:inout		std_logic_vector(7 downto 0);
+	color_spec		:out		std_logic_vector(7 downto 0); -- colorOps uses for strip/protect/all **RED AND BLUE ADDED BY KEYPORT**
+	red_thresh_hi	:out		std_logic_vector(7 downto 0);
+	red_thresh_lo	:out		std_logic_vector(7 downto 0);
+	blue_thresh_hi	:out		std_logic_vector(7 downto 0);
+	blue_thresh_lo	:out		std_logic_vector(7 downto 0);
 	
-	CPU_addr		:out		std_logic_vector(7 downto 0)
-	
+	-- register to direct pin assignments
+	enwh24v 			:out		std_logic; 		-- force enable on buffer assignment at bottom 
+	enwh12v 			:out		std_logic; 		-- due to 24V
+	enwh8v 			:out		std_logic;
+	enwh12vneg 		:out		std_logic;
+	lighttwr 		:out		std_logic_vector(2 downto 0);
+	ipgintf 			:out		std_logic_vector(2 downto 0);
+	ipgpwr 			:out		std_logic_vector(7 downto 0);
+	ipgctrl 			:out		std_logic_vector(4 downto 0);
+	remctrl 			:out		std_logic_vector(2 downto 0);
+	relay1 			:out		std_logic;
+	relay2 			:out		std_logic;
+	relay3 			:out		std_logic;
+	driver5v1 		:out		std_logic;
+	driver5V2 		:out		std_logic;
+--	msg2WH_addr 	:out		std_logic_vector(15 downto 0); -- internal 
+--	msg2cpufrmWH	:out		std_logic_vector(15 downto 0); -- internal
+	dipswu52u50		:in		std_logic_vector(7 downto 0);
+	ipgstatus		:out		std_logic_vector(2 downto 0);
+	remctrl_out		:out		std_logic_vector(1 downto 0);
+--	scan_index_addr:out		std_logic_vector(7 downto 0);
+	pmpwrtest		:out		std_logic_vector(7 downto 0)
 );
 end CPUIntf;
 
 architecture arch of CPUIntf is
 
-	signal ior				:std_logic;	
-	signal iow				:std_logic;
+	signal ior					:std_logic;
+	signal iow					:std_logic;
 	signal busaddr				:std_logic_vector(7 downto 0);
-	
-	signal mall				:std_logic;
+	signal liow					:std_logic;
 	signal D1wrt				:std_logic;
 	signal D2wrt				:std_logic;
 	signal D3wrt				:std_logic;
 	
-	signal outaddress			:std_logic_vector(7 downto 0);   -- latches for address
+	signal outaddress			:std_logic_vector(7 downto 0);  	-- latches for address (HACK - prev. 5 downto 0)
 	signal outdata				:std_logic_vector(7 downto 0);	-- and data from CPU to WH
 	signal outstatus			:std_logic_vector(7 downto 0);	-- latched status from CPU
 	
 	signal inaddress			:std_logic_vector(7 downto 0);	-- to combine 5 addr bits with ready,missed
-	signal instatus				:std_logic_vector(7 downto 0);	-- to combine input status bit
+	signal instatus			:std_logic_vector(7 downto 0);	-- to combine input status bit
 	signal faultstaus			:std_logic_vector(7 downto 0);	-- to combine input fault status bit
 	signal ScanIndex8			:std_logic_vector(7 downto 0);	-- to add 2 msb s to scan index	
 	
-	signal BReadRedData			:std_logic_vector(7 downto 0);	--buffered data from Color Ops	
-	signal BReadBluData			:std_logic_vector(7 downto 0);	
+	signal BReadRedData		:std_logic_vector(7 downto 0);	-- buffered data from Color Ops	
+	signal BReadBluData		:std_logic_vector(7 downto 0);	
+	signal testconnector 	:std_logic_vector(7 downto 0);
+	
+	signal AirPresFault		:std_logic;
+	signal CPUFault			:std_logic;
+	
+	--	list of all new registers					
+	signal enwh24v_i 			:std_logic;
+	signal enwh12v_i			:std_logic;
+	signal enwh8v_i			:std_logic;
+	signal enwh12vneg_i 		:std_logic;
+	signal lighttwr_i 		:std_logic_vector(2 downto 0);
+	signal ipgintf_i 			:std_logic_vector(2 downto 0);
+	signal ipgpwr_i 			:std_logic_vector(7 downto 0);
+	signal ipgctrl_i 			:std_logic_vector(4 downto 0); -- := "11111"; 
+	signal remctrl_i 			:std_logic_vector(2 downto 0);
+	signal relay1_i 			:std_logic;
+	signal relay2_i 			:std_logic;
+	signal relay3_i 			:std_logic;
+	signal driver5v1_i 		:std_logic;
+	signal driver5V2_i 		:std_logic;
+	signal red_thresh_hi_i 	:std_logic_vector(7 downto 0); -- buffer to allow read of thresholds
+	signal red_thresh_lo_i 	:std_logic_vector(7 downto 0); -- ""
+	signal blue_thresh_hi_i :std_logic_vector(7 downto 0); -- ""
+	signal blue_thresh_lo_i :std_logic_vector(7 downto 0); -- ""
+	signal color_spec_i 		:std_logic_vector(7 downto 0);
 
-	constant DATA2WH			:std_logic_vector(7 downto 0):= X"00";
-	constant ADDR2WH			:std_logic_vector(7 downto 0):= X"01";
-	constant STATUS2CPLD			:std_logic_vector(7 downto 0):= X"02";
-	constant RED_HI_ADDR			:std_logic_vector(7 downto 0):= X"03";
-	constant RED_LO_ADDR			:std_logic_vector(7 downto 0):= X"04";
-	constant BLUE_HI_ADDR			:std_logic_vector(7 downto 0):= X"05";
-	constant BLUE_LO_ADDR			:std_logic_vector(7 downto 0):= X"06";
-	constant COLOR_SPEC_ADDR 		:std_logic_vector(7 downto 0):= X"07";
+	-- data for PIC read commands		
+	signal dipswu52u50_i		:std_logic_vector(7 downto 0);
+	signal ipgstatus_i		:std_logic_vector(2 downto 0);
+	signal remctrl_out_i		:std_logic_vector(1 downto 0);
+	signal pmpwrtest_i		:std_logic_vector(7 downto 0);
 	
-	constant DATA2CPU			:std_logic_vector(7 downto 0):= X"00";
-	constant ADDR2CPU			:std_logic_vector(7 downto 0):= X"01";
-	constant STATUS2CPU			:std_logic_vector(7 downto 0):= X"02";
-	constant RED_DATA_ADDR			:std_logic_vector(7 downto 0):= X"03";
-	constant BLU_DATA_ADDR			:std_logic_vector(7 downto 0):= X"04";
-	constant SCAN_INDEX_ADDR		:std_logic_vector(7 downto 0):= X"05";
-	constant FAULT_ADDR			:std_logic_vector(7 downto 0):= X"06";
-
-	-- addresses for CPU read commands
-	constant MSG2WH_ADDR		:std_logic_vector(7 downto 0):= X"00";
-	constant MISC_READBACK_ADDR	:std_logic_vector(7 downto 0):= X"01";
-	constant STATUS2CPU_ADDR:std_logic_vector(7 downto 0):= X"02";
-	constant REVLEVEL_ADDR	:std_logic_vector(7 downto 0):= X"03";
+	-- addresses for PIC write commands
+	constant data2WH				:std_logic_vector(7 downto 0):= X"00"; -- new one byte hexadecimal values
+	constant addr2WH				:std_logic_vector(7 downto 0):= X"01";
+	constant STATUS2FPGA			:std_logic_vector(7 downto 0):= X"02";
+	constant red_hi_addr			:std_logic_vector(7 downto 0):= X"03";
+	constant red_lo_addr			:std_logic_vector(7 downto 0):= X"04";
+	constant blue_hi_addr		:std_logic_vector(7 downto 0):= X"05";
+	constant blue_lo_addr		:std_logic_vector(7 downto 0):= X"06";
+	constant color_spec_addr	:std_logic_vector(7 downto 0):= X"07";
+ 
+	constant ENWH24V_ADDR		:std_logic_vector(7 downto 0):= X"10";
+	constant ENWH12V_ADDR		:std_logic_vector(7 downto 0):= X"11";
+	constant ENWH8V_ADDR			:std_logic_vector(7 downto 0):= X"12";
+	constant ENWH12VNEG_ADDR	:std_logic_vector(7 downto 0):= X"13";
+	constant LIGHTTWR_ADDR		:std_logic_vector(7 downto 0):= X"16";
+	constant IPGINTF_ADDR		:std_logic_vector(7 downto 0):= X"17";
+	constant IPGPWR_ADDR			:std_logic_vector(7 downto 0):= X"18";
+	constant IPGCTRL_ADDR		:std_logic_vector(7 downto 0):= X"19";
+	constant REMCTRL_ADDR		:std_logic_vector(7 downto 0):= X"1A";
+	constant RELAY1_ADDR			:std_logic_vector(7 downto 0):= X"1B";
+	constant RELAY2_ADDR			:std_logic_vector(7 downto 0):= X"1C";
+	constant RELAY3_ADDR			:std_logic_vector(7 downto 0):= X"1D";
+	constant DRIVER5V1_ADDR		:std_logic_vector(7 downto 0):= X"1E";
+	constant DRIVER5V2_ADDR		:std_logic_vector(7 downto 0):= X"1F";
 	
+	-- addresses for PIC read commands		
+	constant data2CPU				:std_logic_vector(7 downto 0):= X"33";
+	constant addr2CPU				:std_logic_vector(7 downto 0):= X"34";
+	constant status2CPU			:std_logic_vector(7 downto 0):= X"35";
+	constant red_data_addr		:std_logic_vector(7 downto 0):= X"36"; -- red actual
+	constant blu_data_addr		:std_logic_vector(7 downto 0):= X"37"; -- blue actual
+	constant scan_index_addr	:std_logic_vector(7 downto 0):= X"38";
+	constant fault_addr			:std_logic_vector(7 downto 0):= X"39";
+	constant msg2WH_addr			:std_logic_vector(7 downto 0):= X"3A";
+	constant FPGAVER				:std_logic_vector(7 downto 0):= X"23";
 	
+	constant INSPLOGIC1_ADDR	:std_logic_vector(7 downto 0):= X"55";
+	
+	constant DIPSWU52U50_ADDR	:std_logic_vector(7 downto 0):= X"27";
+	constant IPGSTATUS_ADDR		:std_logic_vector(7 downto 0):= X"29";
+	constant REMCTRL_OUT_ADDR 	:std_logic_vector(7 downto 0):= X"2A";
+	constant FPGAVER_ADDR		:std_logic_vector(7 downto 0):= X"31";
 
 BEGIN
+----------------------------------- PIC PMP ------------------------------- 
+-- Interface to the PIC 32 PM bus
+-- Interfaces to address/ data multiplexed PMP bus
+-- Reads back status and data to CPU
 
------------------------------------  PIC PMP------------------------------- 
--- Interface to the PIC 32 PM bus.  Interfaces to address/ data multiplexed
--- PMP bus. 
--- Reads back status and data to CPU.
 
-PicPMP : process (rst, iow, ior, clk, mall)
+PicPMP : process (rst, iow, clk, pmall, outaddress, outdata, outstatus) -- process for 
 begin
 
-	if (rst = '0') then
-		outstatus <= b"00000000"; --NOT CPUOK2fire
-	else 
-		if (mall'event and mall='1' ) then	
-			busaddr <= data_bus(7 downto 0);
+	if rst = '0' then busaddr <= "11111111";
+		else if (pmall'event and pmall = '1') then	
+			busaddr <= data_bus(7 downto 0);	
+			-- after activity on PMALL save data_bus to busaddr for message identification
 		end if;
+	end if;	
 			
-		if (clk'event and clk='1' ) then
-			D1wrt <= iow;
-			D2wrt <= iow and D1wrt;
-			D3wrt <= iow and D2wrt;
-			pwrite <= D2wrt and not D3wrt;
-			
-			
-			if pwrite = '1' THEN 		-- messages from PIC to FPGA
-				case(busaddr) is 	-- readng from data_bus
-					when ADDR2WH =>
-						outmsgaddr <= data_bus(13 downto 8);		-- address in MSB
-						outmsgdata <= data_bus(7 downto 0);		-- data in LSB
-						outmsgrdy <= '1';
-					when DATA2WH =>
-						outdata <= data_bus(7 downto 0);
-					when STATUS2CPLD =>									-- 2WH is old version? 
-						outstatus <= data_bus(7 downto 0);
-					when RED_HI_ADDR =>
-						red_thresh_hi <= data_bus(7 downto 0);	
-					when RED_LO_ADDR =>
-						red_thresh_lo <= data_bus(7 downto 0);
-					when BLUE_HI_ADDR =>
-						blue_thresh_hi <= data_bus(7 downto 0);
-					when BLUE_LO_ADDR =>
-						blue_thresh_lo <= data_bus(7 downto 0);
-					when COLOR_SPEC_ADDR =>
-						color_spec <= data_bus(7 downto 0);
-					when others => null;
+	if (clk'event and clk = '1') then
+		D1wrt <= iow;						
+		D2wrt <= iow AND D1wrt;
+		D3wrt <= iow AND D2wrt;
+		pwrite <= D2wrt AND NOT D3wrt;		-- time delay until IOW is 0 
+		
+			if pwrite = '1' THEN 				-- storing data from PIC
+				case(busaddr) is 					-- reading from data_bus
+					when addr2WH =>
+						outmsgdata		<= data_bus(7 downto 0);
+						outmsgrdy 		<= '1';
+					when data2WH =>
+						outdata			<= data_bus(7 downto 0);		
+						outmsgrdy 		<= '1';
+					-- after iow = 1, if the busaddr was identified as data2WH then data_bus contains 
+					-- address and data for data2WH so store data then address then set outmsgrdy high
+					when STATUS2FPGA =>
+						outstatus		<= data_bus(7 downto 0);		
+						outmsgrdy 		<= '1';
+						
+					-- new register addresses	
+					when ENWH24V_ADDR =>
+						enwh24v_i		<= data_bus(0);
+						outmsgrdy		<= '1';
+					when ENWH12V_ADDR =>
+						enwh12v_i			<= data_bus(0);
+						outmsgrdy		<= '1';
+					when ENWH8V_ADDR =>
+						enwh8v_i			<= data_bus(0);
+						outmsgrdy		<= '1';
+					when ENWH12VNEG_ADDR =>
+						enwh12vneg_i	<= data_bus(0);
+						outmsgrdy		<= '1';
+					when LIGHTTWR_ADDR =>
+						lighttwr_i		<= data_bus(2 downto 0);
+						outmsgrdy		<= '1';
+					when IPGINTF_ADDR =>
+						ipgintf_i		<= data_bus(2 downto 0);
+						outmsgrdy		<= '1';
+					when IPGPWR_ADDR =>
+						ipgpwr_i			<= data_bus(7 downto 0);
+						outmsgrdy		<= '1';
+					when IPGCTRL_ADDR =>
+						ipgctrl_i		<= data_bus(4 downto 0);
+						outmsgrdy		<= '1';
+
+					when RELAY1_ADDR =>
+						relay1_i			<= data_bus(0);
+						outmsgrdy		<= '1';
+					when RELAY2_ADDR =>
+						relay2_i			<= data_bus(0);
+						outmsgrdy		<= '1';
+					when RELAY3_ADDR =>
+						relay3_i			<= data_bus(0);
+						outmsgrdy		<= '1';
+					when DRIVER5V1_ADDR =>
+						driver5v1_i		<= data_bus(0);
+						outmsgrdy		<= '1';
+					when DRIVER5V2_ADDR =>
+						driver5v2_i		<= data_bus(0);
+						outmsgrdy		<= '1';
+					when red_hi_addr =>
+						red_thresh_hi_i<= data_bus(7 downto 0);
+						outmsgrdy		<= '1';
+					when red_lo_addr =>
+						red_thresh_lo_i<= data_bus(7 downto 0);
+						outmsgrdy		<= '1';
+					when blue_hi_addr =>
+						blue_thresh_hi_i	<= data_bus(7 downto 0);
+						outmsgrdy		<= '1';
+					when blue_lo_addr =>
+						blue_thresh_lo_i	<= data_bus(7 downto 0);
+						outmsgrdy		<= '1';
+					when color_spec_addr =>
+						color_spec_i		<= data_bus(7 downto 0);
+						outmsgrdy		<= '1';
+					when IPGSTATUS_ADDR =>
+						ipgstatus_i		<= data_bus(2 downto 0);
+						outmsgrdy		<= '1';
+					when REMCTRL_ADDR	=>
+						remctrl_i		<= data_bus(2 downto 0);
+						outmsgrdy		<= '1';
+					when REMCTRL_OUT_ADDR =>
+						remctrl_out_i	<= data_bus(1 downto 0);
+						outmsgrdy		<= '1';
+
+				when others => null;
 				end case;
 				
 				else
 					if outmsgbusy = '1' then outmsgrdy <= '0';
 					end if;
 			end if; -- pwrite
-		end if; -- clk 
-	end if; -- iow
+			
+			IF (ior = '1' AND ReadDataReady = '1') THEN  
+				BReadRedData <=	ReadRedData;	
+				BReadBluData <= 	ReadBluData;
+				GotData <= '1';
+			ELSE IF ReadDataReady = '0' THEN
+				GotData <= '0';
+				END IF; --ReadDataReady
+			END IF; --(ior AND
+		
+	else 
+		outaddress <= outaddress; 				-- otherwise maintain values
+		outdata <= outdata;
+		outstatus <= outstatus;
+	end if; -- clk'event
+
 end process PicPMP;
 
-MsgRead: process (rst, clk, ior, inmsgrdy) 
-BEGIN
-	IF rst = '0' THEN
-		inmsgsent	<= '0';
-	ELSE
-		IF (clk'event and clk='1' ) THEN
-			IF busaddr = MSG2WH_ADDR AND ior='1' AND inmsgrdy = '1' THEN
-				inmsgsent	<= '1';
-			ELSE
-				IF inmsgrdy = '0' THEN inmsgsent	<= '0'; END IF;
-			END IF;
-		END IF; -- (clk'event and 
-	END IF; -- rst = '0' 
-END PROCESS	MsgRead;
-
-
-output_mux	:	process (data_bus, ior)		-- FPGA to PIC32
-begin
-	if (ior = '0') then
-		 data_bus(7 downto 0) <= "ZZZZZZZZ";
-	else
-		 case(busaddr) is -- writing to data_bus
-			when ADDR2CPU => 
-				data_bus(7 downto 0) <= inaddress;
-			when DATA2CPU => 
-				data_bus(7 downto 0) <= inmsgdata;
-			when STATUS2CPU =>
-				data_bus(7 downto 0) <= instatus;
-			when FAULT_ADDR =>
-				data_bus(7 downto 0) <= faultstaus;
-			when RED_DATA_ADDR =>
-				data_bus (15 downto 8)	<= BReadRedData;
-			when BLU_DATA_ADDR =>
-				data_bus (15 downto 8)	<= BReadBluData;
-			when SCAN_INDEX_ADDR =>
-				data_bus (15 downto 8)	<= ScanIndex8;		
-			when others => null;
-		end case;	
-	end if;
-end process output_mux;	
 		
-inaddress(5 downto 0)   <= inmsgaddr;
-inaddress(6) 		<= inmsgmissed;
-inaddress(7)		<= inmsgrdy;
-instatus(7)			<= outmsgbusy;
-faultstaus(3)		<=	DoorOpenFault;
-faultstaus(4)		<=	LaserLeak;
-faultstaus(5)		<=	TrayLeak;
-faultstaus(6)		<=	LowFlowFault;
+data_bus(7 downto 0) <= 
+				inaddress 		when ((busaddr = addr2CPU) 			AND (ior = '1')) else 	
+				-- write contents of 'inaddress' to the first byte of 'data_bus' 
+				-- when busaddr = addr2CPU and ior = 1
+				inmsgdata 		when ((busaddr = data2CPU) 			AND (ior = '1')) else
+				instatus 		when ((busaddr = status2CPU) 			AND (ior = '1')) else
+				faultstaus 		when ((busaddr = fault_addr) 			AND (ior = '1')) else
+				BReadRedData 	when ((busaddr = red_data_addr) 		AND (ior = '1')) else
+				BReadBluData	when ((busaddr = blu_data_addr) 		AND (ior = '1')) else
+				ScanIndex8 		when ((busaddr = scan_index_addr) 	AND (ior = '1')) else
+				FPGAVER			when ((busaddr = FPGAVER_ADDR)		AND (ior = '1')) else
 
-CPUOK2fire			<= outstatus(0);
+				"0000000" & enwh24v_i		when ((busaddr = ENWH24V_ADDR)		and (ior = '1')) else
+				"0000000" & enwh12v_i		when ((busaddr = ENWH12V_ADDR)		and (ior = '1')) else
+				"0000000" & enwh8v_i			when ((busaddr = ENWH8V_ADDR)			and (ior = '1')) else
+				"0000000" & enwh12vneg_i	when ((busaddr = ENWH12VNEG_ADDR)	and (ior = '1')) else
+			--	cpuOK2fire_i	when ((busaddr = CPUOK2fire_addr)	and (ior = '1')) else
+			--	AlignLaserOn_i	when ((busaddr = ALIGNLASERON_ADDR)	and (ior = '1')) else
+				"00000" & lighttwr_i			when ((busaddr = LIGHTTWR_ADDR)		and (ior = '1')) else
+				"00000" & ipgintf_i			when ((busaddr = IPGINTF_ADDR)		and (ior = '1')) else
+				ipgpwr_i							when ((busaddr = IPGPWR_ADDR)			and (ior = '1')) else
+				"000" & ipgctrl_i				when ((busaddr = IPGCTRL_ADDR)		and (ior = '1')) else
+				"00000" & remctrl_i			when ((busaddr = REMCTRL_ADDR)		and (ior = '1')) else
+				"0000000" & relay1_i			when ((busaddr = RELAY1_ADDR)			and (ior = '1')) else
+				"0000000" & relay2_i			when ((busaddr = RELAY2_ADDR)			and (ior = '1')) else
+				"0000000" & relay3_i			when ((busaddr = RELAY3_ADDR)			and (ior = '1')) else
+				"0000000" & driver5v1_i		when ((busaddr = DRIVER5V1_ADDR)		and (ior = '1')) else
+				"0000000" & driver5V2_i		when ((busaddr = DRIVER5V2_ADDR)		and (ior = '1')) else
+				red_thresh_hi_i				when ((busaddr = red_hi_addr)			and (ior = '1')) else
+				red_thresh_lo_i				when ((busaddr = red_lo_addr)			and (ior = '1')) else
+				blue_thresh_hi_i				when ((busaddr = blue_hi_addr)		and (ior = '1')) else
+				blue_thresh_lo_i				when ((busaddr = blue_lo_addr)		and (ior = '1')) else
+				color_spec_i					when ((busaddr = color_spec_addr)	and (ior = '1')) else
+			--	msg2WH_addr_i					when ((busaddr = msg2WH_i)				and (ior = '1')) else
+				
+				-- addresses for PIC read commands		
+				-- control bits (still PIC read) **DUPLICATES COMMENT OUT**
+			--	msg2cpufrmWH_i					when ((busaddr = MSG2CPUFRMWH_ADDR)		and (ior = '1')) else
+				NOT dipswu52u50_i				when ((busaddr = DIPSWU52U50_ADDR)		and (ior = '1')) else
+--				miscinputs_i					when ((busaddr = MISCINPUTS_ADDR)		and (ior = '1')) else
+				"00000" & ipgstatus_i		when ((busaddr = IPGSTATUS_ADDR)			and (ior = '1')) else
+				"000000" & remctrl_out_i	when ((busaddr = REMCTRL_OUT_ADDR)		and (ior = '1')) else
+				
+				"0000000" & insplogic1		when ((busaddr = INSPLOGIC1_ADDR)		and (ior = '1')) else
+							
+				"ZZZZZZZZ"; -- else set data_bus to high impedance
+			
+				
+data_bus(15 downto 8) <=		
+				inaddress		when ((busaddr = msg2WH_addr)	 		AND (ior = '1')) else
+				FPGAVER			when ((busaddr = FPGAVER_ADDR)		AND (ior = '1')) else
+				"ZZZZZZZZ";
+				
+--data_bus(15 downto 0) 
+--		<=		inaddress		when ((busaddr = sixteen)	 			AND (ior = '1')) else
+--				"ZZZZZZZZZZZZZZZZ";				
 
-ScanIndex8(7)		<= '0';
-ScanIndex8(6 downto 0)  <= ScanIndex;
 
--- outmsgdata <= outdata;
--- outmsgaddr(5 downto 0) <= outaddress(5 downto 0);
 
-instatus(0) <= WHisMark3;
+--	list of all new inputs to output registers
+enwh24v			<=	'0'; -- enwh24v_i; -- FORCE CONSTANT OUTPUT WITH '0';
+enwh12v			<=	'1'; -- enwh12v_i; -- FORCE CONSTANT OUTPUT WITH '1';
+enwh8v			<=	'1'; -- enwh8v_i; -- FORCE CONSTANT OUTPUT WITH '1';
+enwh12vneg		<=	'0'; -- enwh12vneg_i; -- FORCE CONSTANT OUTPUT WITH '0';
+lighttwr			<=	lighttwr_i;
+ipgintf			<=	ipgintf_i;
+ipgpwr			<=	ipgpwr_i;
+ipgctrl			<=	ipgctrl_i;
+remctrl			<=	remctrl_i;
+relay1			<=	relay1_i;
+relay2			<=	relay2_i;
+relay3			<=	relay3_i;
+driver5v1		<=	driver5v1_i;
+driver5V2		<=	driver5V2_i;
+red_thresh_hi	<=	red_thresh_hi_i;
+red_thresh_lo	<=	red_thresh_lo_i;
+blue_thresh_hi	<=	blue_thresh_hi_i;
+blue_thresh_lo	<=	blue_thresh_lo_i;
+color_spec		<=	color_spec_i;
+	
+-- addresses for PIC read commands		
+dipSWu52u50_i	<=	dipSWu52u50;
+ipgstatus		<=	ipgstatus_i;
+remctrl_out		<=	remctrl_out_i;
+pmpwrtest		<=	pmpwrtest_i;
 
-iow  <= piow ;
-ior  <= pior ;
-mall <= pmall;
+inaddress(5 downto 0) <= inmsgaddr;
+inaddress(6) 		 <= inmsgmissed;
+inaddress(7)		 <= inmsgrdy;
 
-pread <= pior;
-CPU_addr <= busaddr;
+CPUOK2fire			 <= outstatus(0); -- status2FPGA
+AirPresFault		 <= outstatus(1);
+CPUFault				 <= outstatus(2);
+LaserModeCW			 <= outstatus(3);
+AlignLaserOn		 <= outstatus(4);
+outspare5			 <= '1' WHEN (D2wrt ='1'AND busaddr= red_lo_addr) ELSE '0'; 
+qswreset2fpga		 <= outstatus(6);
+-- outspare6			 <= '1' WHEN (ior='0'   AND busaddr = scan_index_addr)ELSE '0';
+inmsgsent			 <= outstatus(7);
+
+ScanIndex8(7)		 <= '0';
+ScanIndex8(6 downto 0) <= ScanIndex;
+
+-- outmsgdata		 <= outdata; -- HACK ERROR need to find solution to error 
+outmsgaddr(5 downto 0) <= outaddress(5 downto 0);
+
+instatus(0)			 <= WHisMark3;		-- status2PIC
+instatus(1)			 <= RetroError;
+instatus(2)			 <= PulseError;
+instatus(3)			 <= '0'; 				-- NOT IncandMode;		--inverted 11Dec. Incand mode sw closed = led ON = incand mode
+instatus(4)			 <= LaserOn;
+instatus(5)			 <= shutteropen_i; 				-- CoolantOvertemp;
+instatus(6)			 <= qswfailseen_i; 				-- inspare3;
+instatus(7)			 <= outmsgbusy;
+
+faultstaus(0)		<=	LaserFault;
+faultstaus(1)		<=	'0'; -- LaserOverTemp;						
+faultstaus(2)		<=	'0'; -- LaserUnderTemp;						
+faultstaus(3)		<=	'0'; -- DoorOpenFault;	
+faultstaus(4)		<=	'0'; -- LaserLeak;						
+faultstaus(5)		<=	'0'; -- TrayLeak;						
+faultstaus(6)		<=	'0'; -- LowFlowFault;						
+faultstaus(7)		<=	'0'; -- LaserCurrentLow;	
+
+iow <= piow ;
+ior <= pior ;
+
+FaultOut <= '0'	WHEN ((faultstaus = "00000000")
+							AND (RetroError = '0') AND (PulseError = '0')
+							AND (AirPresFault = '0') AND (CPUFault = '0'))
+		ELSE '1';
+		
+-- PAirPresFault <= AirPresFault;		
 
 END arch; 
 
-
+-- **copy of new control registers**
+--	enwh24v
+--	enwh12v
+--	enwh8v
+--	enwh12vneg
+----	cpuOK2fire
+----	AlignLaserOn
+--	lighttwr
+--	ipgintf
+--	ipgpwr
+--	ipgctrl
+--	remctrl
+--	relay1
+--	relay2
+--	relay3
+--	driver5v1
+--	driver5V2
+----	red_thresh_hi
+----	red_thresh_lo
+----	blue_thresh_hi
+----	blue_thresh_lo
+----	color_spec
+----	msg2WH_addr
+--	
+--	-- addresses for PIC read commands		
+--	-- control bits (still PIC read) **DUPLICATES COMMENT OUT**
+----	msg2cpufrmWH
+--	dipswu52u50
+--	miscinputs
+--	ipgstatus
+----	remctrl_out
+----	red_data
+----	blu_data
+----	scan_index
+--	faultstaus
+--	pulse_peak
+--	pulse_energy
+----	fpgaver
+----	pmpwrtest
